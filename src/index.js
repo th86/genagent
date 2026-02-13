@@ -44,12 +44,15 @@ class GenAgent {
       return;
     }
 
+    // Setup handlers FIRST (before any async operations)
+    this.setupGracefulShutdown();
+    
     await this.initialize();
     this.running = true;
 
     // Show startup info
     console.log(`
-🤖 GenAgent is running!
+🤖 GenAgent is running! 
 
 📱 Interfaces:
 ${config.interfaces.telegram?.enabled ? '  ✅ Telegram bot' : '  ❌ Telegram bot (disabled)'}
@@ -61,8 +64,6 @@ ${config.interfaces.cli?.enabled ? '  ✅ CLI (run npm run cli)' : '  ❌ CLI (d
 
 🛑 Press Ctrl+C to stop
     `);
-
-    this.setupGracefulShutdown();
   }
 
   /**
