@@ -2,6 +2,8 @@
 
 A general-purpose AI agent with extensible skills, browser control, and multiple interface support (CLI + Telegram).
 
+Created using [OpenCode](https://opencode.ai/).
+
 ## Features
 
 - **🤖 AI-powered** - Powered by NVIDIA NIM LLM (Llama 3.3)
