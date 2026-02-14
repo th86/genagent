@@ -1,5 +1,6 @@
 import nvidiaClient from '../llm/nvidia-client.js';
 import skillManager from './skill-manager.js';
+import browserService from '../browser/puppeteer-service.js';
 import config from '../utils/config.js';
 import logger from '../utils/logger.js';
 
@@ -76,6 +77,16 @@ class Agent {
           }))
         };
       }
+    }
+
+    // Use tool execution loop for browser skill
+    const isBrowserSkill = skill && (
+      skill.name.toLowerCase().includes('browser') ||
+      skill.name.toLowerCase().includes('web')
+    );
+
+    if (isBrowserSkill && config.browser.enabled && !stream) {
+      return this.processMessageWithTools(message, { skillName: skill.name, context });
     }
 
     // Build prompt with skill context
@@ -169,6 +180,243 @@ You can still use browser commands:
     prompt += '\nAssistant:';
 
     return prompt;
+  }
+
+  /**
+   * Parse tool calls from LLM response
+   */
+  parseToolCalls(text) {
+    const toolCalls = [];
+    
+    // Match JSON-like objects - handle both quoted and unquoted keys
+    // Patterns: {"action": "..."} or {action: "..."} or {action: '...'}
+    const patterns = [
+      /\{[^{}]*"action"\s*:\s*"[^"]*"[^{}]*\}/g,
+      /\{[^{}]*"action"\s*:\s*'[^']*'[^{}]*\}/g,
+      /\{[^{}]*action\s*:\s*"[^"]*"[^{}]*\}/g,
+      /\{[^{}]*action\s*:\s*'[^']*'[^{}]*\}/g,
+    ];
+    
+    for (const pattern of patterns) {
+      const matches = text.match(pattern);
+      if (matches) {
+        for (const match of matches) {
+          try {
+            // Try direct JSON parse first
+            let parsed;
+            try {
+              parsed = JSON.parse(match);
+            } catch (e) {
+              // Try converting unquoted keys to quoted keys
+              const fixed = match.replace(/(\w+):/g, '"$1":');
+              parsed = JSON.parse(fixed);
+            }
+            
+            if (parsed.action) {
+              toolCalls.push(parsed);
+            }
+          } catch (e) {
+            // Not valid JSON, skip
+          }
+        }
+      }
+    }
+    
+    // Also try simpler pattern for action only
+    const simplePattern = /\{[^}]*action\s*:[^}]*\}/g;
+    const simpleMatches = text.match(simplePattern);
+    if (simpleMatches) {
+      for (const match of simpleMatches) {
+        const actionMatch = match.match(/action\s*:\s*["']?([^"'}\s,]+)["']?/);
+        const urlMatch = match.match(/url\s*:\s*(?:["']([^"']+)["']|([^\s,}+]+))/);
+        const selectorMatch = match.match(/selector\s*:\s*(?:["']([^"']+)["']|(\S+))/);
+        const textMatch = match.match(/text\s*:\s*(?:["']([^"']+)["']|(\S+))/);
+        const directionMatch = match.match(/direction\s*:\s*["']([^"']+)["']/);
+        const amountMatch = match.match(/amount\s*:\s*(\d+)/);
+        const actionTypeMatch = match.match(/action_type\s*:\s*["']([^"']+)["']/);
+        
+        if (actionMatch) {
+          const toolCall = { action: actionMatch[1] };
+          if (urlMatch) toolCall.url = urlMatch[1] || urlMatch[2];
+          if (selectorMatch) toolCall.selector = selectorMatch[1] || selectorMatch[2];
+          if (textMatch) toolCall.text = textMatch[1] || textMatch[2];
+          if (directionMatch) toolCall.direction = directionMatch[1];
+          if (amountMatch) toolCall.amount = parseInt(amountMatch[1]);
+          if (actionTypeMatch) toolCall.action_type = actionTypeMatch[1];
+          
+          // Avoid duplicates
+          if (!toolCalls.find(tc => tc.action === toolCall.action)) {
+            toolCalls.push(toolCall);
+          }
+        }
+      }
+    }
+    
+    return toolCalls;
+  }
+
+  /**
+   * Execute a tool call
+   */
+  async executeToolCall(toolCall) {
+    const { action, url, selector, text, direction, amount, action_type } = toolCall;
+    
+    logger.info(`🔧 Executing tool: ${action}`);
+    
+    try {
+      switch (action) {
+        case 'open_website':
+          if (!url || url.trim() === '' || url === 'undefined') {
+            return { success: false, error: `Missing or invalid url parameter. Got: ${JSON.stringify(toolCall)}` };
+          }
+          return await browserService.open(url);
+          
+        case 'get_content':
+        case 'extract_content':
+          return await browserService.getContent();
+          
+        case 'screenshot':
+        case 'take_screenshot':
+          return await browserService.screenshot();
+          
+        case 'click_element':
+          if (!selector) return { success: false, error: 'Missing selector parameter' };
+          return await browserService.click(selector);
+          
+        case 'type_text':
+          if (!selector || !text) return { success: false, error: 'Missing selector or text parameter' };
+          return await browserService.type(selector, text);
+          
+        case 'scroll':
+          return await browserService.scroll(direction || 'down', amount || 500);
+          
+        case 'navigate':
+          return await browserService.navigate(action_type || 'back');
+          
+        default:
+          return { success: false, error: `Unknown action: ${action}` };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Process message with tool execution loop
+   */
+  async processMessageWithTools(message, options = {}) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    const { skillName, context = [], stream = false } = options;
+
+    let skill = null;
+    let detectedSkills = [];
+
+    if (skillName) {
+      skill = skillManager.getSkill(skillName);
+      if (!skill) {
+        return { error: `Skill '${skillName}' not found` };
+      }
+    } else {
+      detectedSkills = skillManager.detectSkills(message);
+      
+      if (detectedSkills.length === 0) {
+        skill = skillManager.getSkill('general');
+      } else if (detectedSkills.length === 1) {
+        skill = detectedSkills[0].skillData;
+      } else {
+        return {
+          needsChoice: true,
+          skills: detectedSkills.map(s => ({
+            name: s.skillData.name,
+            description: s.skillData.description,
+            confidence: s.confidence,
+            triggers: s.triggers
+          }))
+        };
+      }
+    }
+
+    // Build initial prompt
+    let prompt = this.buildPrompt(message, skill, context);
+    let currentContext = [...context];
+
+    // Tool execution loop (max 3 iterations)
+    for (let iteration = 0; iteration < 3; iteration++) {
+      // Get response from LLM
+      const response = await nvidiaClient.getCompleteResponse(prompt, currentContext);
+      
+      // Check for tool calls
+      const toolCalls = this.parseToolCalls(response);
+      
+      logger.debug(`Iteration ${iteration + 1}: Found ${toolCalls.length} tool calls`);
+      if (toolCalls.length > 0) {
+        logger.debug(`Tool calls: ${JSON.stringify(toolCalls)}`);
+      }
+      
+      if (toolCalls.length === 0) {
+        // No tool calls, return the response
+        this.sessionHistory.push({ role: 'user', content: message });
+        this.sessionHistory.push({ role: 'assistant', content: response });
+        
+        return {
+          response,
+          skill: skill.name,
+          detectedSkills: detectedSkills
+        };
+      }
+
+      // Execute tool calls and collect results
+      let toolResults = '';
+      for (const toolCall of toolCalls) {
+        let result = await this.executeToolCall(toolCall);
+        
+        // Automatically get content after opening a website
+        if (toolCall.action === 'open_website' && result.success) {
+          logger.info('🔧 Auto-extracting content after opening website...');
+          const contentResult = await browserService.getContent();
+          if (contentResult.success) {
+            result = { ...result, ...contentResult };
+          }
+        }
+        
+        // Format result for LLM
+        let resultText = `Tool: ${toolCall.action}\n`;
+        if (result.success) {
+          resultText += `Status: Success\n`;
+          if (result.title) resultText += `Title: ${result.title}\n`;
+          if (result.url) resultText += `URL: ${result.url}\n`;
+          if (result.text) resultText += `Content:\n${result.text.substring(0, 4000)}\n`;
+          if (result.headings && result.headings.length > 0) {
+            resultText += `Headings: ${result.headings.join(', ')}\n`;
+          }
+          if (result.links && result.links.length > 0) {
+            resultText += `Links (${result.links.length} total): ${result.links.slice(0, 5).map(l => l.text).join(', ')}\n`;
+          }
+          if (result.buttons && result.buttons.length > 0) {
+            resultText += `Buttons: ${result.buttons.join(', ')}\n`;
+          }
+          if (result.filepath) resultText += `Screenshot saved: ${result.filepath}\n`;
+          if (result.selector) resultText += `Clicked: ${result.selector}\n`;
+        } else {
+          resultText += `Status: Failed\nError: ${result.error}\n`;
+        }
+        
+        toolResults += resultText + '\n';
+        logger.info(`📊 Tool result: ${result.success ? 'OK' : 'FAILED'}`);
+      }
+
+      // Add tool results to context and ask LLM to continue
+      currentContext.push({ role: 'assistant', content: response });
+      currentContext.push({ role: 'user', content: `Tool results:\n${toolResults}\n\nPlease provide a helpful response to the user based on these results.` });
+      
+      prompt = '';
+    }
+
+    // Max iterations reached, return last response
+    return { error: 'Tool execution limit reached' };
   }
 
   /**

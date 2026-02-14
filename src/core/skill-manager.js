@@ -125,7 +125,7 @@ class SkillManager {
       priority: metadata.priority || 10,
       triggers: metadata.triggers || this.extractTriggers(sections.capabilities || ''),
       capabilities: this.parseCapabilities(sections.capabilities || ''),
-      systemPrompt: sections.system_prompt || sections.systemprompt || this.buildDefaultPrompt(metadata.name),
+      systemPrompt: metadata.system_prompt || sections.system_prompt || sections.systemprompt || this.buildDefaultPrompt(metadata.name),
       apiEndpoints: metadata.api_endpoints || {},
       config: metadata.config || {},
       enabled: metadata.enabled !== false,

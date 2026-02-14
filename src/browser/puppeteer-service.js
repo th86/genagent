@@ -175,10 +175,40 @@ class BrowserService {
       const content = await this.page.content();
       const text = await this.page.evaluate(() => document.body.innerText);
       
+      // Extract structured data for LLM
+      const structured = await this.page.evaluate(() => {
+        const getMeta = (name) => {
+          const el = document.querySelector(`meta[name="${name}"], meta[property="${name}"]`);
+          return el ? el.getAttribute('content') : null;
+        };
+        
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+          .map(h => h.innerText.trim())
+          .filter(t => t.length > 0)
+          .slice(0, 10);
+        
+        const links = Array.from(document.querySelectorAll('a'))
+          .filter(a => a.href && a.innerText)
+          .slice(0, 20)
+          .map(a => ({ text: a.innerText.trim().substring(0, 50), href: a.href }));
+        
+        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'))
+          .filter(b => b.innerText || b.value)
+          .slice(0, 10)
+          .map(b => b.innerText || b.value);
+        
+        return { headings, links, buttons };
+      });
+      
       return {
         success: true,
+        title: await this.page.title(),
+        url: this.page.url(),
         html: content,
-        text: text.substring(0, 5000)  // Limit text length
+        text: text.substring(0, 8000),
+        headings: structured.headings,
+        links: structured.links,
+        buttons: structured.buttons
       };
     } catch (error) {
       return {
