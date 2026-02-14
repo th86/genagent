@@ -26,6 +26,7 @@ interfaces:
     prompt: "🤖"
     welcome_message: |
       Welcome to GenAgent CLI!
+      Tai-Hsien Ou Yang, 2026
       Type 'help' for available commands
       Type 'exit' to quit
   
