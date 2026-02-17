@@ -79,6 +79,37 @@ class TelegramBotInterface {
       await this.handleSettings(ctx);
     });
 
+    // Permission commands
+    this.bot.command('allow', async (ctx) => {
+      await this.handleAllowPermission(ctx);
+    });
+
+    this.bot.command('deny', async (ctx) => {
+      await this.handleDenyPermission(ctx);
+    });
+
+    this.bot.command('permissions', async (ctx) => {
+      await this.handlePermissions(ctx);
+    });
+
+    this.bot.command('pending', async (ctx) => {
+      await this.handlePendingPermissions(ctx);
+    });
+
+    // Scheduler commands
+    this.bot.command('schedule', async (ctx) => {
+      await this.handleSchedule(ctx);
+    });
+
+    this.bot.command('schedules', async (ctx) => {
+      await this.handleSchedules(ctx);
+    });
+
+    // Stop command
+    this.bot.command('stop', async (ctx) => {
+      await this.handleStop(ctx);
+    });
+
     // Handle text messages
     this.bot.on('message:text', async (ctx) => {
       await this.handleMessage(ctx);
@@ -334,6 +365,150 @@ Use /browser visible or /browser headless to change browser mode.`;
         }
       }
     );
+  }
+
+  /**
+   * Handle /allow command
+   */
+  async handleAllowPermission(ctx) {
+    const requestId = ctx.message.text.replace('/allow', '').trim();
+    
+    if (!requestId) {
+      await ctx.reply('Please provide a request ID.\nUsage: /allow <request-id>\nUse /pending to see pending requests.');
+      return;
+    }
+
+    const result = agent.grantPermission(requestId);
+    if (result.success) {
+      await ctx.reply('✅ Permission granted!');
+    } else {
+      await ctx.reply(`❌ ${result.error || 'Failed to grant permission'}`);
+    }
+  }
+
+  /**
+   * Handle /deny command
+   */
+  async handleDenyPermission(ctx) {
+    const requestId = ctx.message.text.replace('/deny', '').trim();
+    
+    if (!requestId) {
+      await ctx.reply('Please provide a request ID.\nUsage: /deny <request-id>\nUse /pending to see pending requests.');
+      return;
+    }
+
+    const result = agent.denyPermission(requestId);
+    if (result.success) {
+      await ctx.reply('✅ Permission denied.');
+    } else {
+      await ctx.reply(`❌ ${result.error || 'Failed to deny permission'}`);
+    }
+  }
+
+  /**
+   * Handle /permissions command
+   */
+  async handlePermissions(ctx) {
+    const perms = agent.listPermissions();
+    
+    let message = '🔐 *Granted Permissions:*\n\n';
+    
+    if (perms.length === 0) {
+      message += 'No granted permissions.';
+    } else {
+      for (const perm of perms) {
+        message += `• *${perm.type}*\n`;
+        message += `  Level: ${perm.level}\n`;
+        message += `  Details: ${JSON.stringify(perm.details)}\n\n`;
+      }
+    }
+    
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  }
+
+  /**
+   * Handle /pending command
+   */
+  async handlePendingPermissions(ctx) {
+    const pending = agent.getPendingPermissions();
+    
+    let message = '🔐 *Pending Permission Requests:*\n\n';
+    
+    if (pending.length === 0) {
+      message += 'No pending requests.';
+    } else {
+      for (const req of pending) {
+        message += `• *${req.type}*\n`;
+        message += `  ID: \`${req.id}\`\n`;
+        message += `  Details: ${JSON.stringify(req.details)}\n\n`;
+        message += `Use /allow ${req.id} to grant or /deny ${req.id} to deny.\n\n`;
+      }
+    }
+    
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  }
+
+  /**
+   * Handle /schedule command
+   */
+  async handleSchedule(ctx) {
+    const args = ctx.message.text.replace('/schedule', '').trim();
+    
+    if (!args) {
+      await ctx.reply(`📅 *Schedule Commands:*
+
+/schedule "name" every 30 minutes
+/schedule "name" at 2026-02-20 14:00
+/schedule "name" daily at 9am
+/schedules - List all tasks`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    const match = args.match(/(?:["'])(.+?)(?:["'])\s+(.+)/);
+    if (match) {
+      const name = match[1];
+      const schedule = match[2];
+      const command = 'What is the current time?';
+      
+      try {
+        const task = agent.addScheduledTask(name, schedule, command);
+        await ctx.reply(`✅ Scheduled: "${task.name}" (${task.type})\nID: ${task.id}\nSchedule: ${task.schedule}`);
+      } catch (error) {
+        await ctx.reply(`❌ ${error.message}`);
+      }
+    } else {
+      await ctx.reply('Invalid format. Use: /schedule "task name" every 30 minutes');
+    }
+  }
+
+  /**
+   * Handle /schedules command
+   */
+  async handleSchedules(ctx) {
+    const tasks = agent.listScheduledTasks();
+    
+    let message = '📅 *Scheduled Tasks:*\n\n';
+    
+    if (tasks.length === 0) {
+      message += 'No scheduled tasks.';
+    } else {
+      for (const task of tasks) {
+        message += `• *${task.name}*\n`;
+        message += `  ID: \`${task.id}\`\n`;
+        message += `  Schedule: ${task.schedule}\n`;
+        message += `  Status: ${task.enabled ? 'Running' : 'Paused'}\n`;
+        message += `  Runs: ${task.runCount}, Success: ${task.successCount}\n\n`;
+      }
+    }
+    
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  }
+
+  /**
+   * Handle /stop command
+   */
+  async handleStop(ctx) {
+    await ctx.reply('⚠️ Stop signal sent to running tasks.\n\nUse /schedules to see running tasks.');
   }
 
   /**

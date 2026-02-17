@@ -1,5 +1,6 @@
 import TelegramBotInterface from './interfaces/telegram/index.js';
 import agent from './core/agent.js';
+import scheduler from './core/scheduler.js';
 import browserService from './browser/puppeteer-service.js';
 import config from './utils/config.js';
 import logger from './utils/logger.js';
@@ -82,6 +83,8 @@ ${config.interfaces.cli?.enabled ? '  ✅ CLI (run npm run cli)' : '  ❌ CLI (d
       if (browserService.isReady()) {
         await browserService.close();
       }
+      
+      scheduler.shutdown();
       
       logger.success('GenAgent stopped');
       process.exit(0);

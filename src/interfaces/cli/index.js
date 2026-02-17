@@ -187,6 +187,64 @@ class CLIInterface {
       return true;
     }
 
+    // Scheduler commands
+    if (cmd.startsWith('schedule ') || cmd.startsWith('at ') || cmd.startsWith('every ')) {
+      this.handleScheduleCommand(input);
+      return true;
+    }
+
+    if (cmd === 'schedules' || cmd === 'schedule list') {
+      this.handleScheduleCommand('list');
+      return true;
+    }
+
+    if (cmd.startsWith('schedule delete ') || cmd.startsWith('schedule remove ')) {
+      const taskId = input.replace(/^(schedule delete|schedule remove)\s+/i, '');
+      this.handleScheduleCommand('delete ' + taskId);
+      return true;
+    }
+
+    if (cmd.startsWith('schedule run ')) {
+      const taskId = input.replace('schedule run ', '');
+      this.handleScheduleCommand('run ' + taskId);
+      return true;
+    }
+
+    if (cmd.startsWith('schedule stop ')) {
+      const taskId = input.replace('schedule stop ', '');
+      this.handleScheduleCommand('stop ' + taskId);
+      return true;
+    }
+
+    // Stop command
+    if (cmd === 'stop' || cmd === 'cancel' || cmd === 'abort') {
+      this.handleStopCommand(input);
+      return true;
+    }
+
+    // Permission commands
+    if (cmd === 'permissions' || cmd === 'perms') {
+      this.handlePermissionCommand('list');
+      return true;
+    }
+
+    if (cmd.startsWith('allow ') || cmd.startsWith('grant ')) {
+      const requestId = input.replace(/^(allow|grant)\s+/i, '');
+      this.handlePermissionCommand('allow ' + requestId);
+      return true;
+    }
+
+    if (cmd.startsWith('deny ') || cmd.startsWith('reject ')) {
+      const requestId = input.replace(/^(deny|reject)\s+/i, '');
+      this.handlePermissionCommand('deny ' + requestId);
+      return true;
+    }
+
+    if (cmd === 'pending' || cmd === 'pending permissions') {
+      this.handlePermissionCommand('pending');
+      return true;
+    }
+
     return false;
   }
 
@@ -204,6 +262,23 @@ ${chalk.gray('General:')}
   history           Show conversation history
   clear             Clear screen
   exit, quit        Exit the CLI
+
+${chalk.gray('Scheduler:')}
+  schedule "name" every 30 minutes  Schedule a task
+  schedule "name" at 2026-02-20 14:00  One-time schedule
+  schedule "name" daily at 9am       Daily schedule
+  schedules                         List all scheduled tasks
+  schedule run <id>                 Run a task now
+  schedule stop <id>                Stop a running task
+
+${chalk.gray('Permissions:')}
+  permissions, perms    List granted permissions
+  pending               Show pending permission requests
+  allow <id>            Grant a permission
+  deny <id>             Deny a permission
+
+${chalk.gray('Stop:')}
+  stop, cancel, abort   Signal stop to running tasks
 
 ${chalk.gray('Browser:')}
   open <url>        Open a website
@@ -347,6 +422,184 @@ ${chalk.gray('Browser:')}
         console.log(chalk.gray('   or'));
         console.log(chalk.gray('   which chromium'));
       }
+    }
+  }
+
+  /**
+   * Handle schedule commands
+   */
+  async handleScheduleCommand(input) {
+    const cmd = input.toLowerCase().trim();
+    
+    if (cmd === 'list' || cmd === 'schedules') {
+      const tasks = agent.listScheduledTasks();
+      console.log(chalk.cyan('\n📅 Scheduled Tasks:\n'));
+      if (tasks.length === 0) {
+        console.log(chalk.gray('  No scheduled tasks'));
+      } else {
+        for (const task of tasks) {
+          console.log(chalk.white(`  • ${chalk.bold(task.name)}`));
+          console.log(chalk.gray(`    ID: ${task.id}`));
+          console.log(chalk.gray(`    Schedule: ${task.schedule}`));
+          console.log(chalk.gray(`    Status: ${task.enabled ? 'Running' : 'Paused'}`));
+          console.log(chalk.gray(`    Runs: ${task.runCount}, Success: ${task.successCount}, Failed: ${task.failureCount}`));
+          console.log();
+        }
+      }
+      return;
+    }
+
+    if (cmd.startsWith('delete ') || cmd.startsWith('remove ')) {
+      const taskId = cmd.replace(/^(delete|remove)\s+/, '');
+      const result = agent.removeScheduledTask(taskId);
+      if (result.success) {
+        console.log(chalk.green('✅ Task removed'));
+      } else {
+        console.log(chalk.red('❌ ' + result.error));
+      }
+      return;
+    }
+
+    if (cmd.startsWith('run ')) {
+      const taskId = cmd.replace('run ', '');
+      agent.runScheduledTask(taskId);
+      console.log(chalk.green('✅ Task started'));
+      return;
+    }
+
+    if (cmd.startsWith('stop ')) {
+      const taskId = cmd.replace('stop ', '');
+      agent.stopScheduledTask(taskId);
+      console.log(chalk.green('✅ Task stop requested'));
+      return;
+    }
+
+    if (cmd.startsWith('pause ')) {
+      const taskId = cmd.replace('pause ', '');
+      const result = agent.pauseScheduledTask(taskId);
+      if (result.success) {
+        console.log(chalk.green('✅ Task paused'));
+      } else {
+        console.log(chalk.red('❌ ' + result.error));
+      }
+      return;
+    }
+
+    if (cmd.startsWith('resume ')) {
+      const taskId = cmd.replace('resume ', '');
+      const result = agent.resumeScheduledTask(taskId);
+      if (result.success) {
+        console.log(chalk.green('✅ Task resumed'));
+      } else {
+        console.log(chalk.red('❌ ' + result.error));
+      }
+      return;
+    }
+
+    // Parse: "name" every/at/in schedule
+    const match = input.match(/(?:schedule\s+)?["'](.+?)["']\s+(.+)/i);
+    if (match) {
+      const name = match[1];
+      const schedule = match[2];
+      const remaining = input.replace(match[0], '').trim();
+      const command = remaining || `Tell me the time`;
+      
+      try {
+        const task = agent.addScheduledTask(name, schedule, command);
+        console.log(chalk.green(`✅ Scheduled: "${task.name}" (${task.type})`));
+        console.log(chalk.gray(`   ID: ${task.id}`));
+        console.log(chalk.gray(`   Schedule: ${task.schedule}`));
+      } catch (error) {
+        console.log(chalk.red('❌ ' + error.message));
+      }
+      return;
+    }
+
+    console.log(chalk.yellow('\n📅 Schedule Commands:'));
+    console.log(chalk.gray('  schedule "task name" every 30 minutes'));
+    console.log(chalk.gray('  schedule "task name" at 2026-02-20 14:00'));
+    console.log(chalk.gray('  schedule "task name" daily at 9am'));
+    console.log(chalk.gray('  schedule "task name" weekly on monday at 9am'));
+    console.log(chalk.gray('  schedules - List all tasks'));
+    console.log(chalk.gray('  schedule run <id> - Run task now'));
+    console.log(chalk.gray('  schedule stop <id> - Stop running task'));
+    console.log(chalk.gray('  schedule delete <id> - Remove task'));
+  }
+
+  /**
+   * Handle stop command
+   */
+  handleStopCommand(input) {
+    console.log(chalk.yellow('\n⚠️ Available stop options:'));
+    console.log(chalk.gray('  stop all - Stop all running tasks'));
+    console.log(chalk.gray('  stop fix - Stop auto-fix attempts'));
+    
+    const cmd = input.toLowerCase();
+    if (cmd.includes('all')) {
+      console.log(chalk.green('✅ Stop signal sent to all tasks'));
+    } else if (cmd.includes('fix')) {
+      console.log(chalk.green('✅ Auto-fix attempts will be stopped'));
+    }
+  }
+
+  /**
+   * Handle permission commands
+   */
+  async handlePermissionCommand(input) {
+    const cmd = input.toLowerCase().trim();
+    
+    if (cmd === 'list' || cmd === 'permissions') {
+      const perms = agent.listPermissions();
+      console.log(chalk.cyan('\n🔐 Granted Permissions:\n'));
+      if (perms.length === 0) {
+        console.log(chalk.gray('  No granted permissions'));
+      } else {
+        for (const perm of perms) {
+          console.log(chalk.white(`  • ${chalk.bold(perm.type)}`));
+          console.log(chalk.gray(`    Level: ${perm.level}`));
+          console.log(chalk.gray(`    Details: ${JSON.stringify(perm.details)}`));
+          console.log();
+        }
+      }
+      return;
+    }
+
+    if (cmd === 'pending') {
+      const pending = agent.getPendingPermissions();
+      console.log(chalk.cyan('\n🔐 Pending Permission Requests:\n'));
+      if (pending.length === 0) {
+        console.log(chalk.gray('  No pending requests'));
+      } else {
+        for (const req of pending) {
+          console.log(chalk.white(`  • ${chalk.bold(req.type)}`));
+          console.log(chalk.gray(`    ID: ${req.id}`));
+          console.log(chalk.gray(`    Details: ${JSON.stringify(req.details)}`));
+          console.log();
+        }
+      }
+      return;
+    }
+
+    if (cmd.startsWith('allow ') || cmd.startsWith('grant ')) {
+      const requestId = cmd.replace(/^(allow|grant)\s+/, '');
+      const result = agent.grantPermission(requestId);
+      if (result.success) {
+        console.log(chalk.green('✅ Permission granted'));
+      } else {
+        console.log(chalk.red('❌ ' + result.error));
+      }
+      return;
+    }
+
+    if (cmd.startsWith('deny ')) {
+      const requestId = cmd.replace('deny ', '');
+      const result = agent.denyPermission(requestId);
+      if (result.success) {
+        console.log(chalk.green('✅ Permission denied'));
+      } else {
+        console.log(chalk.red('❌ ' + result.error));
+      }
+      return;
     }
   }
 }

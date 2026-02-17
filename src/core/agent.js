@@ -1,6 +1,9 @@
 import nvidiaClient from '../llm/nvidia-client.js';
 import skillManager from './skill-manager.js';
 import browserService from '../browser/puppeteer-service.js';
+import scheduler from './scheduler.js';
+import permissions from './permissions.js';
+import autofix from './autofix.js';
 import config from '../utils/config.js';
 import logger from '../utils/logger.js';
 
@@ -486,6 +489,95 @@ You can still use browser commands:
       return true;
     }
     return false;
+  }
+
+  /**
+   * Scheduler methods
+   */
+  addScheduledTask(name, schedule, command, options = {}) {
+    return scheduler.addTask(name, schedule, command, options);
+  }
+
+  removeScheduledTask(taskId) {
+    return scheduler.removeTask(taskId);
+  }
+
+  listScheduledTasks() {
+    return scheduler.listTasks();
+  }
+
+  runScheduledTask(taskId) {
+    return scheduler.runTask(taskId);
+  }
+
+  pauseScheduledTask(taskId) {
+    return scheduler.pauseTask(taskId);
+  }
+
+  resumeScheduledTask(taskId) {
+    return scheduler.resumeTask(taskId);
+  }
+
+  stopScheduledTask(taskId) {
+    return scheduler.requestStop(taskId);
+  }
+
+  /**
+   * Permission methods
+   */
+  requestPermission(type, details, userId = 'cli') {
+    return permissions.requestPermission(type, details, userId);
+  }
+
+  grantPermission(requestId, options = {}) {
+    return permissions.grantPermission(requestId, options);
+  }
+
+  denyPermission(requestId) {
+    return permissions.denyPermission(requestId);
+  }
+
+  checkPermission(type, details) {
+    return permissions.checkPermission(type, details);
+  }
+
+  listPermissions() {
+    return permissions.listPermissions();
+  }
+
+  getPendingPermissions() {
+    return permissions.getPendingRequests();
+  }
+
+  /**
+   * Auto-fix methods
+   */
+  analyzeError(error) {
+    return autofix.analyzeError(error);
+  }
+
+  suggestFix(errorAnalysis) {
+    return autofix.suggestFix(errorAnalysis);
+  }
+
+  async attemptFix(taskId, fixSuggestion) {
+    return autofix.attemptFix(taskId, fixSuggestion);
+  }
+
+  stopFix(taskId) {
+    return autofix.stop(taskId);
+  }
+
+  isFixStopped(taskId) {
+    return autofix.isStopped(taskId);
+  }
+
+  getFixAttempts(taskId) {
+    return autofix.getAttempts(taskId);
+  }
+
+  resetFixAttempts(taskId) {
+    return autofix.resetAttempts(taskId);
   }
 }
 

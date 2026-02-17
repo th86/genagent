@@ -92,3 +92,24 @@ security:
   api_keys_required:
     - nvidia
     - telegram
+
+# ============================================
+# Scheduler Configuration
+# ============================================
+scheduler:
+  enabled: true
+  max_concurrent_tasks: 5
+  default_max_attempts: 5
+  storage_path: ./data/schedules
+
+# ============================================
+# Permissions Configuration
+# ============================================
+permissions:
+  enabled: true
+  auto_save: true
+  storage_path: ./data/permissions.json
+  require_confirmation:
+    - package_install
+    - command_run
+    - folder_access
