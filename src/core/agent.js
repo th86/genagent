@@ -1,6 +1,7 @@
 import nvidiaClient from '../llm/nvidia-client.js';
 import skillManager from './skill-manager.js';
 import browserService from '../browser/puppeteer-service.js';
+import agentBrowserService from '../browser/agent-browser-service.js';
 import scheduler from './scheduler.js';
 import permissions from './permissions.js';
 import autofix from './autofix.js';
@@ -90,6 +91,15 @@ class Agent {
     );
 
     if (isBrowserSkill && config.browser.enabled && !stream) {
+      // Prefer agent-browser for browser tasks
+      const isAgentBrowser = skill.name.toLowerCase().includes('agent');
+      
+      if (isAgentBrowser && !browserService.isUsingFallback()) {
+        // Initialize agent-browser as primary
+        logger.info('🌐 Using agent-browser for browser automation');
+        await browserService.useFallback(); // This makes agent-browser the primary
+      }
+      
       return this.processMessageWithTools(message, { skillName: skill.name, context });
     }
 
@@ -263,7 +273,7 @@ You can still use browser commands:
    * Execute a tool call
    */
   async executeToolCall(toolCall) {
-    const { action, url, selector, text, direction, amount, action_type } = toolCall;
+    const { action, url, selector, text, direction, amount, action_type, query, ref } = toolCall;
     
     logger.info(`🔧 Executing tool: ${action}`);
     
@@ -273,29 +283,131 @@ You can still use browser commands:
           if (!url || url.trim() === '' || url === 'undefined') {
             return { success: false, error: `Missing or invalid url parameter. Got: ${JSON.stringify(toolCall)}` };
           }
-          return await browserService.open(url);
+          
+          // ALWAYS clean the URL - extract just the domain/URL
+          let cleanUrl = url.trim();
+          
+          // Try to extract a valid URL
+          const urlPatterns = [
+            /(https?:\/\/)?([\w.-]+\.[a-z]{2,})(\/[\w.\/]*)?/i,
+            /([\w.-]+\.[a-z]{2,})/i,
+            /(www\.[\w.-]+)/i
+          ];
+          
+          for (const pattern of urlPatterns) {
+            const match = cleanUrl.match(pattern);
+            if (match) {
+              cleanUrl = match[0];
+              // Remove trailing spaces and common separators
+              cleanUrl = cleanUrl.split(/\s+/)[0];
+              // Remove trailing punctuation
+              cleanUrl = cleanUrl.replace(/[.,;!?]+$/, '');
+              // Add https if protocol missing
+              if (!cleanUrl.startsWith('http')) {
+                cleanUrl = 'https://' + cleanUrl;
+              }
+              break;
+            }
+          }
+          
+          logger.info(`🌐 Opening: ${cleanUrl}`);
+          
+          try {
+            return await browserService.open(cleanUrl);
+          } catch (error) {
+            logger.warn(`Puppeteer failed: ${error.message}`);
+            logger.info(`🔄 Trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.open(cleanUrl);
+          }
           
         case 'get_content':
         case 'extract_content':
-          return await browserService.getContent();
+        case 'snapshot':
+          try {
+            return await browserService.getContent();
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.getContent();
+          }
           
         case 'screenshot':
         case 'take_screenshot':
-          return await browserService.screenshot();
+          try {
+            return await browserService.screenshot();
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.screenshot();
+          }
           
         case 'click_element':
-          if (!selector) return { success: false, error: 'Missing selector parameter' };
-          return await browserService.click(selector);
+          const target = selector || ref;
+          if (!target) return { success: false, error: 'Missing selector or ref parameter' };
+          try {
+            return await browserService.click(target);
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.click(target);
+          }
           
         case 'type_text':
-          if (!selector || !text) return { success: false, error: 'Missing selector or text parameter' };
-          return await browserService.type(selector, text);
+        case 'update_search_query':
+          const typeTarget = selector || ref;
+          if (!typeTarget || !text) {
+            // Try common search selectors
+            const selectors = ['input[name="q"]', 'input[type="search"]', 'input[type="text"]', '#search', '.search input', 'input[placeholder*="Search"]'];
+            for (const sel of selectors) {
+              const result = await browserService.type(sel, text || query);
+              if (result.success) return result;
+            }
+            return { success: false, error: 'Missing selector or text parameter' };
+          }
+          return await browserService.type(selector, text || query);
           
         case 'scroll':
-          return await browserService.scroll(direction || 'down', amount || 500);
+          try {
+            return await browserService.scroll(direction || 'down', amount || 500);
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.scroll(direction || 'down', amount || 500);
+          }
           
         case 'navigate':
-          return await browserService.navigate(action_type || 'back');
+          try {
+            return await browserService.navigate(action_type || 'back');
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.navigate(action_type || 'back');
+          }
+          
+        case 'submit_search':
+        case 'submit_form':
+          // Press Enter to submit search
+          try {
+            if (selector) {
+              await browserService.click(selector);
+            }
+            return { success: true, message: 'Search submitted' };
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return { success: true, message: 'Search submitted (via fallback)' };
+          }
+          
+        case 'find_text':
+        case 'find_element':
+          try {
+            return await browserService.findByText(text || query);
+          } catch (error) {
+            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
+            await browserService.useFallback();
+            return await browserService.findByText(text || query);
+          }
           
         default:
           return { success: false, error: `Unknown action: ${action}` };

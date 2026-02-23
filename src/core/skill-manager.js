@@ -83,11 +83,11 @@ class SkillManager {
       // Has frontmatter (--- at start)
       try {
         // Find the YAML between the first pair of ---
-        const yamlMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        const yamlMatch = content.match(/^---\s*([\s\S]*?)\s*---/);
         if (yamlMatch) {
           metadata = parseYaml(yamlMatch[1]) || {};
           // Get body after the second ---
-          body = content.replace(/^---[\s\S]*?---\n/, '');
+          body = content.replace(/^---[\s\S]*?---\s*/, '');
         }
       } catch (e) {
         logger.warn(`Failed to parse frontmatter in ${filename}:`, e.message);
@@ -124,7 +124,7 @@ class SkillManager {
       version: metadata.version || '1.0.0',
       priority: metadata.priority || 10,
       triggers: metadata.triggers || this.extractTriggers(sections.capabilities || ''),
-      capabilities: this.parseCapabilities(sections.capabilities || ''),
+      capabilities: metadata.capabilities || this.parseCapabilities(sections.capabilities || ''),
       systemPrompt: metadata.system_prompt || sections.system_prompt || sections.systemprompt || this.buildDefaultPrompt(metadata.name),
       apiEndpoints: metadata.api_endpoints || {},
       config: metadata.config || {},
@@ -164,15 +164,27 @@ class SkillManager {
   /**
    * Parse capabilities section
    */
-  parseCapabilities(capabilitiesText) {
+  parseCapabilities(capabilitiesInput) {
+    // Handle both YAML array format and markdown format
+    if (Array.isArray(capabilitiesInput)) {
+      return capabilitiesInput.map(cap => ({
+        name: cap.name || '',
+        description: cap.description || '',
+        method: cap.method || ''
+      }));
+    }
+    
     const capabilities = [];
-    const lines = capabilitiesText.split('\n');
+    const lines = capabilitiesInput.split('\n');
     let currentCap = null;
 
     for (const line of lines) {
-      const nameMatch = line.match(/^-\s+name:\s*(.+)$/);
-      const descMatch = line.match(/^\s+description:\s*(.+)$/);
-      const methodMatch = line.match(/^\s+method:\s*(.+)$/);
+      // Match capability name: - name: capability_name
+      const nameMatch = line.match(/^[\s-]*name:\s*(.+)$/);
+      // Match description: can have varying indentation
+      const descMatch = line.match(/^[\s]*description:\s*(.+)$/);
+      // Match method: can have varying indentation  
+      const methodMatch = line.match(/^[\s]*method:\s*(.+)$/);
 
       if (nameMatch) {
         if (currentCap) capabilities.push(currentCap);

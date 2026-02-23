@@ -16,6 +16,7 @@ class BrowserService {
   constructor() {
     this.browser = null;
     this.page = null;
+    this.fallback = null;
     this.screenshotsPath = join(__dirname, '../../data/screenshots');
     this.ensureScreenshotsDirectory();
   }
@@ -466,6 +467,80 @@ class BrowserService {
    */
   isReady() {
     return this.browser !== null && this.page !== null;
+  }
+
+  /**
+   * Check if using agent-browser fallback
+   */
+  isUsingFallback() {
+    return this.fallback !== null && this.fallback !== undefined;
+  }
+
+  /**
+   * Use agent-browser as fallback when Puppeteer fails
+   */
+  async useFallback() {
+    const agentBrowser = await import('./agent-browser-service.js');
+    const fallback = agentBrowser.default || agentBrowser.agentBrowserService;
+    
+    logger.info('🔄 Switching to agent-browser fallback...');
+    
+    // Copy methods from agent-browser to this service
+    this.fallback = fallback;
+    
+    // Override key methods to use agent-browser
+    this.open = async (url) => {
+      if (!this.fallback) {
+        const agentBrowser = await import('./agent-browser-service.js');
+        this.fallback = agentBrowser.default || agentBrowser.agentBrowserService;
+      }
+      return await this.fallback.open(url);
+    };
+    
+    this.getContent = async () => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.getContent();
+    };
+    
+    this.screenshot = async (filename) => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.screenshot(filename);
+    };
+    
+    this.click = async (selector) => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.click(selector);
+    };
+    
+    this.type = async (selector, text) => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.type(text, selector);
+    };
+    
+    this.scroll = async (direction, amount) => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.scroll(direction, amount);
+    };
+    
+    this.navigate = async (action) => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.navigate(action);
+    };
+    
+    this.findByText = async (text) => {
+      if (!this.fallback) return { success: false, error: 'Browser not initialized' };
+      return await this.fallback.findByText(text);
+    };
+    
+    this.close = async () => {
+      if (this.fallback) {
+        await this.fallback.close();
+        this.fallback = null;
+      }
+    };
+    
+    logger.success('✅ Now using agent-browser fallback');
+    return { success: true, fallback: true };
   }
 }
 
