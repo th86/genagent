@@ -4,6 +4,7 @@ import browserService from '../browser/puppeteer-service.js';
 import scheduler from './scheduler.js';
 import permissions from './permissions.js';
 import autofix from './autofix.js';
+import codeModifier from './code-modifier.js';
 import config from '../utils/config.js';
 import logger from '../utils/logger.js';
 
@@ -578,6 +579,103 @@ You can still use browser commands:
 
   resetFixAttempts(taskId) {
     return autofix.resetAttempts(taskId);
+  }
+
+  /**
+   * Code modification methods (Self-modification)
+   */
+
+  /**
+   * Request to modify the agent's own code
+   * Creates a backup before applying changes
+   */
+  async requestCodeModification(changes, description = '') {
+    logger.info('🔧 Processing code modification request...');
+    
+    try {
+      const result = await codeModifier.applyChanges(changes, description);
+      
+      if (result.success) {
+        return {
+          success: true,
+          message: `Code modification applied successfully.\nBackup created: ${result.backup}\n\nThe agent will verify on next startup. If issues are detected, it will automatically revert.`,
+          backup: result.backup,
+          changes: result.changes
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error,
+          restored: result.restored,
+          message: `Code modification failed: ${result.error}${result.restored ? '\n\nAutomatically reverted to previous version.' : ''}`
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        message: `Code modification error: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Revert the last code modification
+   */
+  revertLastModification() {
+    const pending = codeModifier.getPendingChanges();
+    if (pending) {
+      const reverted = codeModifier.revertPending();
+      if (reverted) {
+        return {
+          success: true,
+          message: 'Successfully reverted to the previous version.'
+        };
+      }
+    }
+    return {
+      success: false,
+      error: 'No pending modifications to revert'
+    };
+  }
+
+  /**
+   * Get current pending modifications
+   */
+  getPendingModifications() {
+    return codeModifier.getPendingChanges();
+  }
+
+  /**
+   * List available backups
+   */
+  listBackups() {
+    return codeModifier.listBackups();
+  }
+
+  /**
+   * Restore from a specific backup
+   */
+  restoreFromBackup(backupName) {
+    try {
+      codeModifier.restoreBackup(backupName);
+      return {
+        success: true,
+        message: `Successfully restored from backup: ${backupName}`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Verify current code integrity
+   */
+  async verifyCodeIntegrity() {
+    return await codeModifier.verifyStartup();
   }
 }
 

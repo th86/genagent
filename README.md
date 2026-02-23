@@ -12,6 +12,7 @@ A general-purpose AI agent with extensible skills, browser control, scheduled ta
 - **📅 Scheduled Tasks** - One-time, recurring (cron-like), and heartbeat intervals
 - **🔧 Auto-fix** - Automatic problem solving with up to 5 retry attempts
 - **🔐 Permission System** - Ask before installing packages or running commands
+- **🧬 Self-Modification** - Agent can modify its own code with automatic rollback on failure
 
 ## Quick Start
 
@@ -175,6 +176,37 @@ Permission types:
 Permissions can be:
 - `once` - Ask each time
 - `always` - Grant permanently
+
+## Self-Modification
+
+GenAgent can modify its own code to add new features or fix issues. This is a powerful capability with built-in safety mechanisms.
+
+### How It Works
+
+1. **Backup First** - Before any modification, a full backup is created
+2. **Apply Changes** - The agent can create, update, or delete files in `src/` and `skills/`
+3. **Startup Verification** - On next startup, the agent verifies its integrity
+4. **Automatic Rollback** - If verification fails, it automatically reverts to the previous version
+
+### Safety Features
+
+- **Directory Restrictions** - Can only modify `src/` and `skills/` directories
+- **Backup System** - Keeps up to 10 backups automatically
+- **Startup Check** - Validates core files before starting
+- **User Prompt** - If something goes wrong, the user is asked what to do next
+
+### What Can Be Modified
+
+- Add new skills (`skills/*.md`)
+- Modify existing skills
+- Add new modules (`src/**/*.js`)
+- Modify existing source files
+- Update configuration
+
+### What Cannot Be Modified
+
+- Files outside `src/` and `skills/` (e.g., `node_modules`, `.env`)
+- System files or critical configuration
 
 ## Adding Skills
 
