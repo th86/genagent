@@ -257,8 +257,8 @@ triggers:
 genagent/
 ├── src/
 │   ├── core/           # Agent, scheduler, permissions, autofix
-│   ├── interfaces/     # CLI & Telegram
-│   ├── browser/        # Puppeteer service
+│   ├── interfaces/    # CLI & Telegram
+│   ├── browser/       # agent-browser service
 │   └── llm/           # NVIDIA client
 ├── skills/            # Skill definitions
 ├── data/              # Sessions, schedules, permissions
@@ -270,7 +270,7 @@ genagent/
 
 - Node.js 20+
 - grammY (Telegram)
-- Puppeteer (Browser)
+- agent-browser (Browser automation)
 - Inquirer (CLI)
 - NVIDIA NIM (LLM)
 - YAML (Configuration)

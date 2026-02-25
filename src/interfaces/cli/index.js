@@ -1,7 +1,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import agent from '../../core/agent.js';
-import browserService from '../../browser/puppeteer-service.js';
+import browserService from '../../browser/agent-browser-service.js';
 import sessionManager from '../../core/session.js';
 import config from '../../utils/config.js';
 import logger from '../../utils/logger.js';
@@ -147,29 +147,6 @@ class CLIInterface {
     // History
     if (cmd === 'history' || cmd === 'hist') {
       this.printHistory();
-      return true;
-    }
-
-    // Browser commands
-    if (cmd.startsWith('open ') || cmd.startsWith('goto ')) {
-      const url = input.replace(/^(open|goto)\s+/, '');
-      this.handleBrowserCommand('open', url);
-      return true;
-    }
-
-    if (cmd === 'screenshot' || cmd === 'ss') {
-      this.handleBrowserCommand('screenshot');
-      return true;
-    }
-
-    if (cmd.startsWith('click ')) {
-      const selector = input.replace('click ', '');
-      this.handleBrowserCommand('click', selector);
-      return true;
-    }
-
-    if (cmd === 'back' || cmd === 'forward' || cmd === 'refresh') {
-      this.handleBrowserCommand('navigate', cmd);
       return true;
     }
 
@@ -413,11 +390,13 @@ ${chalk.gray('Browser:')}
       // Provide helpful troubleshooting
       if (error.message.includes('Failed to launch') || error.message.includes('browser process')) {
         console.log(chalk.yellow('\n💡 Troubleshooting:'));
-        console.log(chalk.gray('1. Try running in headless mode:'));
+        console.log(chalk.gray('1. Install agent-browser:'));
+        console.log(chalk.gray('   npm install -g agent-browser'));
+        console.log(chalk.gray('\n2. Or run in headless mode:'));
         console.log(chalk.gray('   browser headless'));
-        console.log(chalk.gray('\n2. Or update Chrome/Chromium:'));
-        console.log(chalk.gray('   npx puppeteer browsers install chrome'));
-        console.log(chalk.gray('\n3. Check if Chrome is installed:'));
+        console.log(chalk.gray('\n3. Check agent-browser:'));
+        console.log(chalk.gray('   npx agent-browser --version'));
+        console.log(chalk.gray('\n4. Check if Chrome is installed:'));
         console.log(chalk.gray('   which google-chrome'));
         console.log(chalk.gray('   or'));
         console.log(chalk.gray('   which chromium'));

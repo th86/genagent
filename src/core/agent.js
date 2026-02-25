@@ -1,7 +1,6 @@
 import nvidiaClient from '../llm/nvidia-client.js';
 import skillManager from './skill-manager.js';
-import browserService from '../browser/puppeteer-service.js';
-import agentBrowserService from '../browser/agent-browser-service.js';
+import browserService from '../browser/agent-browser-service.js';
 import scheduler from './scheduler.js';
 import permissions from './permissions.js';
 import autofix from './autofix.js';
@@ -52,6 +51,75 @@ class Agent {
 
     const { skillName, context = [], stream = false } = options;
 
+    // Check if this is a browser request - extract URL first if so
+    const browserKeywords = ['open', 'browse', 'visit', 'go to', 'navigate'];
+    const isBrowserRequest = browserKeywords.some(kw => message.toLowerCase().startsWith(kw));
+    
+    // If browser request, try to extract and open URL BEFORE any LLM processing
+    if (isBrowserRequest && config.browser.enabled && !stream) {
+      const { url, instructions } = this.parseBrowserMessage(message);
+      
+      if (url) {
+        logger.info(`🌐 Browser request detected - opening URL: ${url}`);
+        
+        try {
+          // Clean URL
+          let cleanUrl = url.trim();
+          const urlPatterns = [
+            /(https?:\/\/)?([\w.-]+\.[a-z]{2,})(\/[\w.\/]*)?/i,
+            /([\w.-]+\.[a-z]{2,})/i,
+            /(www\.[\w.-]+)/i
+          ];
+          
+          for (const pattern of urlPatterns) {
+            const match = cleanUrl.match(pattern);
+            if (match) {
+              cleanUrl = match[0].split(/\s+/)[0].replace(/[.,;!?]+$/, '');
+              if (!cleanUrl.startsWith('http')) {
+                cleanUrl = 'https://' + cleanUrl;
+              }
+              break;
+            }
+          }
+          
+          logger.info(`🌐 Opening cleaned URL: ${cleanUrl}`);
+          
+          // Open URL
+          const openResult = await browserService.open(cleanUrl);
+          
+          if (openResult.success) {
+            // Get content
+            const contentResult = await browserService.getContent();
+            
+            const pageContent = contentResult.text || contentResult.output || 'No content';
+            
+            // Get skill for browser
+            skill = skillManager.getSkill('agent browser') || skillManager.getSkill('browser control') || skillManager.getSkill('general');
+            
+            // Build prompt with page content and instructions
+            const instructionsText = instructions || 'Describe what you see on this page';
+            const prompt = `${skill.systemPrompt || ''}\n\nThe page ${cleanUrl} has been opened.\n\nPage content:\n${pageContent.substring(0, 8000)}\n\nUser request: ${instructionsText}\n\nPlease provide a helpful response based on the page content.`;
+            
+            const response = await nvidiaClient.getCompleteResponse(prompt, context);
+            
+            this.sessionHistory.push({ role: 'user', content: message });
+            this.sessionHistory.push({ role: 'assistant', content: response });
+            
+            return {
+              response,
+              skill: skill.name,
+              detectedSkills: []
+            };
+          } else {
+            return { error: `Failed to open URL: ${openResult.error}` };
+          }
+        } catch (error) {
+          logger.error('Browser error:', error.message);
+          // Fall through to normal processing
+        }
+      }
+    }
+
     // Detect or use specified skill
     let skill = null;
     let detectedSkills = [];
@@ -91,15 +159,74 @@ class Agent {
     );
 
     if (isBrowserSkill && config.browser.enabled && !stream) {
-      // Prefer agent-browser for browser tasks
-      const isAgentBrowser = skill.name.toLowerCase().includes('agent');
+      // Parse the message to extract URL and instructions
+      const { url, instructions } = this.parseBrowserMessage(message);
       
-      if (isAgentBrowser && !browserService.isUsingFallback()) {
-        // Initialize agent-browser as primary
-        logger.info('🌐 Using agent-browser for browser automation');
-        await browserService.useFallback(); // This makes agent-browser the primary
+      // If we found a URL, open it FIRST, then let LLM handle instructions
+      if (url) {
+        logger.info(`🌐 Opening URL: ${url}`);
+        
+        try {
+          // Clean and open the URL - extract just the domain
+          let cleanUrl = url.trim();
+          
+          // Use the same URL cleaning logic as executeToolCall
+          const urlPatterns = [
+            /(https?:\/\/)?([\w.-]+\.[a-z]{2,})(\/[\w.\/]*)?/i,
+            /([\w.-]+\.[a-z]{2,})/i,
+            /(www\.[\w.-]+)/i
+          ];
+          
+          for (const pattern of urlPatterns) {
+            const match = cleanUrl.match(pattern);
+            if (match) {
+              cleanUrl = match[0];
+              // Remove trailing spaces and common separators
+              cleanUrl = cleanUrl.split(/\s+/)[0];
+              // Remove trailing punctuation
+              cleanUrl = cleanUrl.replace(/[.,;!?]+$/, '');
+              // Add https if protocol missing
+              if (!cleanUrl.startsWith('http')) {
+                cleanUrl = 'https://' + cleanUrl;
+              }
+              break;
+            }
+          }
+          
+          logger.info(`🌐 Opening cleaned URL: ${cleanUrl}`);
+          
+          const openResult = await browserService.open(cleanUrl);
+          
+          if (openResult.success) {
+            // Get content immediately
+            const contentResult = await browserService.getContent();
+            
+            // Build a message for the LLM with just the instructions
+            let llmMessage = instructions || 'Describe what you see on this page';
+            
+            // Add content to context so LLM can summarize
+            const contentContext = [{
+              role: 'user', 
+              content: `The page ${cleanUrl} has been opened. Here is the content:\n\n${contentResult.text || contentResult.output || 'No content available'}\n\nNow please: ${llmMessage}`
+            }];
+            
+            logger.info(`📝 Processing instructions: "${llmMessage}"`);
+            
+            // Process the instructions with the page content
+            return this.processMessageWithTools(llmMessage, { 
+              skillName: skill.name, 
+              context: [...context, ...contentContext]
+            });
+          } else {
+            return { error: `Failed to open URL: ${openResult.error}` };
+          }
+        } catch (error) {
+          logger.error('Browser error:', error.message);
+          return { error: `Browser error: ${error.message}` };
+        }
       }
       
+      // No URL detected, proceed normally
       return this.processMessageWithTools(message, { skillName: skill.name, context });
     }
 
@@ -270,6 +397,73 @@ You can still use browser commands:
   }
 
   /**
+   * Parse browser message to extract URL and instructions
+   * e.g., "open www.npr.org and summarize" -> { url: "www.npr.org", instructions: "summarize" }
+   */
+  parseBrowserMessage(message) {
+    const result = { url: null, instructions: null };
+    
+    // Common URL patterns
+    const urlPatterns = [
+      // Full URLs: https://example.com, http://example.com
+      /https?:\/\/[^\s]+/i,
+      // Domain with optional path: example.com, www.example.com, sub.example.com
+      /(?:www\.)?[\w-]+\.[\w-]+(?:\/[^\s]*)?/i,
+      // Just www prefix
+      /www\.[^\s]+/i
+    ];
+    
+    // Words that typically precede the URL
+    const urlPreceders = [
+      /^open\s+/i,
+      /^browse\s+/i,
+      /^go\s+to\s+/i,
+      /^visit\s+/i,
+      /^navigate\s+to\s+/i,
+      /^\s*on\s+/i,
+    ];
+    
+    // Words that typically follow the URL (instructions)
+    const instructionSeparators = [
+      /\s+and\s+/i,
+      /\s+then\s+/i,
+      /\s+after\s+that\s+/i,
+      /\s*,\s*/,
+      /\s+to\s+/i,
+    ];
+    
+    let remainingText = message.trim();
+    
+    // Try to find URL at the start (after open/browse/etc)
+    for (const pattern of urlPatterns) {
+      const match = remainingText.match(pattern);
+      if (match) {
+        result.url = match[0];
+        
+        // Get everything after the URL as instructions
+        const urlEndIndex = match.index + match[0].length;
+        let afterUrl = remainingText.substring(urlEndIndex).trim();
+        
+        // Clean up common separators at the start
+        for (const sep of instructionSeparators) {
+          afterUrl = afterUrl.replace(sep, ' ').trim();
+        }
+        
+        // Remove common leading words
+        afterUrl = afterUrl.replace(/^(and|then|to|also)\s+/i, '').trim();
+        
+        if (afterUrl && afterUrl.length > 0) {
+          result.instructions = afterUrl;
+        }
+        
+        break;
+      }
+    }
+    
+    return result;
+  }
+
+  /**
    * Execute a tool call
    */
   async executeToolCall(toolCall) {
@@ -313,12 +507,25 @@ You can still use browser commands:
           logger.info(`🌐 Opening: ${cleanUrl}`);
           
           try {
-            return await browserService.open(cleanUrl);
+            const openResult = await browserService.open(cleanUrl);
+            
+            if (openResult.success) {
+              logger.info('🔧 Auto-fetching page content...');
+              const contentResult = await browserService.getContent();
+              if (contentResult.success) {
+                return { 
+                  ...openResult, 
+                  text: contentResult.text || contentResult.output,
+                  snapshot: contentResult.snapshot,
+                  url: cleanUrl
+                };
+              }
+            }
+            
+            return openResult;
           } catch (error) {
-            logger.warn(`Puppeteer failed: ${error.message}`);
-            logger.info(`🔄 Trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.open(cleanUrl);
+            logger.error('Browser error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'get_content':
@@ -327,9 +534,8 @@ You can still use browser commands:
           try {
             return await browserService.getContent();
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.getContent();
+            logger.error('Get content error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'screenshot':
@@ -337,9 +543,8 @@ You can still use browser commands:
           try {
             return await browserService.screenshot();
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.screenshot();
+            logger.error('Screenshot error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'click_element':
@@ -348,9 +553,8 @@ You can still use browser commands:
           try {
             return await browserService.click(target);
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.click(target);
+            logger.error('Click error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'type_text':
@@ -371,32 +575,28 @@ You can still use browser commands:
           try {
             return await browserService.scroll(direction || 'down', amount || 500);
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.scroll(direction || 'down', amount || 500);
+            logger.error('Scroll error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'navigate':
           try {
             return await browserService.navigate(action_type || 'back');
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.navigate(action_type || 'back');
+            logger.error('Navigate error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'submit_search':
         case 'submit_form':
-          // Press Enter to submit search
           try {
             if (selector) {
               await browserService.click(selector);
             }
             return { success: true, message: 'Search submitted' };
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return { success: true, message: 'Search submitted (via fallback)' };
+            logger.error('Submit search error:', error.message);
+            return { success: false, error: error.message };
           }
           
         case 'find_text':
@@ -404,9 +604,8 @@ You can still use browser commands:
           try {
             return await browserService.findByText(text || query);
           } catch (error) {
-            logger.warn(`Puppeteer failed, trying agent-browser fallback...`);
-            await browserService.useFallback();
-            return await browserService.findByText(text || query);
+            logger.error('Find element error:', error.message);
+            return { success: false, error: error.message };
           }
           
         default:
@@ -504,7 +703,8 @@ You can still use browser commands:
           resultText += `Status: Success\n`;
           if (result.title) resultText += `Title: ${result.title}\n`;
           if (result.url) resultText += `URL: ${result.url}\n`;
-          if (result.text) resultText += `Content:\n${result.text.substring(0, 4000)}\n`;
+          if (result.text) resultText += `Page Content:\n${result.text.substring(0, 5000)}\n`;
+          if (result.snapshot) resultText += `Snapshot:\n${result.snapshot.substring(0, 3000)}\n`;
           if (result.headings && result.headings.length > 0) {
             resultText += `Headings: ${result.headings.join(', ')}\n`;
           }

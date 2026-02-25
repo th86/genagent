@@ -1,6 +1,6 @@
 import { Bot } from 'grammy';
 import agent from '../../core/agent.js';
-import browserService from '../../browser/puppeteer-service.js';
+import browserService from '../../browser/agent-browser-service.js';
 import sessionManager from '../../core/session.js';
 import config from '../../utils/config.js';
 import logger from '../../utils/logger.js';

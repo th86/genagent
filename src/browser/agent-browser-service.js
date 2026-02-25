@@ -344,6 +344,13 @@ class AgentBrowserService {
       return false;
     }
   }
+
+  /**
+   * Check if browser session is ready (has an active URL)
+   */
+  isReady() {
+    return this.currentUrl !== null;
+  }
 }
 
 export const agentBrowserService = new AgentBrowserService();
