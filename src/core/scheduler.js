@@ -43,7 +43,8 @@ class Scheduler {
 
   saveTask(task) {
     const filepath = join(SCHEDULES_DIR, `${task.id}.json`);
-    writeFileSync(filepath, JSON.stringify(task, null, 2));
+    const { timeout, intervalId, ...taskData } = task;
+    writeFileSync(filepath, JSON.stringify(taskData, null, 2));
   }
 
   generateId() {
